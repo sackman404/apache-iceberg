@@ -1,0 +1,70 @@
+services:
+  spark-iceberg:
+    image: spark
+    container_name: spark
+    build: ./build/spark
+    networks:
+      iceberg_net:
+    depends_on:
+      - rest
+      - minio
+    volumes:
+      - ./warehouse:/home/iceberg/warehouse
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+    ports:
+      - 8083:8080
+      - 8080:8080
+  rest:
+    image: apache/iceberg-rest-fixture
+    container_name: iceberg-rest
+    networks:
+      iceberg_net:
+    ports:
+      - 8181:8181
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_S3_PATH__STYLE__ACCESS:true
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+    command: java -cp /usr/lib/iceberg-rest/*:iceberg-rest-adapter.jar org.apache.iceberg.rest.RESTCatalogServer
+  minio:
+    image: minio/minio
+    container_name: minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_DOMAIN=minio
+    networks:
+      iceberg_net:
+        aliases:
+          - warehouse.minio
+    ports:
+      - 9001:9001
+      - 9000:9000
+    command: ["server", "/data", "--console-address", ":9001"]
+  mc:
+    depends_on:
+      - minio
+    image: minio/mc
+    container_name: mc
+    networks:
+      iceberg_net:
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+    entrypoint: |
+      /bin/sh -c "
+      until (/usr/bin/mc alias set minio http://minio:9000 admin password) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc mb minio/warehouse;
+      /usr/bin/mc policy set public minio/warehouse;
+      tail -f /dev/null
+      "
+networks:
+  iceberg_net:
